@@ -18,6 +18,94 @@ FEATURE_COLUMNS = [
 
 LABEL_COLUMN = "late_delivery"
 
+# ─── Column alias map ─────────────────────────────────────────────────────────
+# Maps common alternative header names → canonical column names.
+# Applied before REQUIRED_COLUMNS validation so uploads with slightly different
+# headers (e.g. from Excel exports, ERP reports, or manual spreadsheets) work
+# without requiring the user to rename columns first.
+COLUMN_ALIASES: dict[str, str] = {
+    # supplier_price
+    "harga":               "supplier_price",
+    "price":               "supplier_price",
+    "unit_price":          "supplier_price",
+    "contract_value":      "supplier_price",
+    "harga_satuan":        "supplier_price",
+    "total_po_value":      "supplier_price",
+    "avg_price":           "supplier_price",
+
+    # lead_time_days
+    "lead_time":           "lead_time_days",
+    "leadtime":            "lead_time_days",
+    "lead_time_day":       "lead_time_days",
+    "avg_lead_time":       "lead_time_days",
+    "avg_delivery_days":   "lead_time_days",
+    "delivery_days":       "lead_time_days",
+    "hari_pengiriman":     "lead_time_days",
+    "lead_time_hari":      "lead_time_days",
+
+    # claim_rate
+    "claim":               "claim_rate",
+    "defect_rate":         "claim_rate",
+    "return_rate":         "claim_rate",
+    "tingkat_klaim":       "claim_rate",
+    "klaim":               "claim_rate",
+
+    # on_time_rate
+    "on_time":             "on_time_rate",
+    "ontime_rate":         "on_time_rate",
+    "ontime":              "on_time_rate",
+    "ketepatan_waktu":     "on_time_rate",
+    "tingkat_tepat_waktu": "on_time_rate",
+    "delivery_rate":       "on_time_rate",
+
+    # order_frequency
+    "order_freq":          "order_frequency",
+    "frequency":           "order_frequency",
+    "total_orders":        "order_frequency",
+    "order_count":         "order_frequency",
+    "jumlah_order":        "order_frequency",
+    "frekuensi_order":     "order_frequency",
+
+    # late_delivery (label)
+    "label":               "late_delivery",
+    "is_late":             "late_delivery",
+    "terlambat":           "late_delivery",
+    "late":                "late_delivery",
+    "delay":               "late_delivery",
+    "delayed":             "late_delivery",
+    "keterlambatan":       "late_delivery",
+}
+
+
+def normalize_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Rename columns using COLUMN_ALIASES after lowercasing and stripping whitespace.
+
+    Steps:
+      1. Strip leading/trailing whitespace from all header names.
+      2. Lowercase everything.
+      3. Replace internal spaces and hyphens with underscores so
+         "Lead Time" and "lead-time" both become "lead_time" before alias lookup.
+      4. Apply COLUMN_ALIASES to map any recognised alternative name to its
+         canonical form.
+
+    Args:
+        df: DataFrame with raw (possibly non-standard) column names.
+
+    Returns:
+        DataFrame with normalised column names.
+    """
+    import re
+    df = df.copy()
+
+    def _norm(col: str) -> str:
+        col = col.strip().lower()
+        col = re.sub(r"[\s\-]+", "_", col)   # spaces/hyphens → underscore
+        col = re.sub(r"_+", "_", col)         # collapse consecutive underscores
+        return COLUMN_ALIASES.get(col, col)
+
+    df.columns = [_norm(c) for c in df.columns]
+    return df
+
 
 def load_dataset(csv_path: str | Path | None = None) -> pd.DataFrame:
     """Load the training CSV from disk.

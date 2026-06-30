@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.services.predict import invalidate_model_cache, predict_supplier_risk
 from app.services.train_model import REQUIRED_COLUMNS, train
+from app.services.preprocess import normalize_columns
 
 logger = logging.getLogger(__name__)
 
@@ -222,9 +223,7 @@ def train_from_rows_endpoint(payload: TrainFromRowsRequest) -> TrainResponse:
     """POST /train/from-rows — called by the .NET backend with live ERP data."""
     try:
         df = pd.DataFrame(payload.rows)
-
-        # Normalize column names: strip whitespace and lowercase
-        df.columns = [c.strip().lower() for c in df.columns]
+        df = normalize_columns(df)
 
         metrics = train(dataframe=df, append_to_existing=payload.append_to_existing)
     except (ValueError, KeyError) as exc:
@@ -265,10 +264,7 @@ async def train_from_csv_upload_endpoint(
     try:
         contents = await file.read()
         df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
-
-        # Normalize column names: strip whitespace and lowercase
-        # so headers like " Supplier_Price " still match
-        df.columns = [c.strip().lower() for c in df.columns]
+        df = normalize_columns(df)
 
         metrics = train(dataframe=df, append_to_existing=append_to_existing)
     except (ValueError, KeyError) as exc:

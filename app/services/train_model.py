@@ -24,6 +24,7 @@ from app.services.preprocess import (
     FEATURE_COLUMNS,
     LABEL_COLUMN,
     load_dataset,
+    normalize_columns,
     preprocess_dataframe,
 )
 
@@ -97,9 +98,9 @@ def train(
     # Resolve the training DataFrame
     # ------------------------------------------------------------------
     if dataframe is not None:
-        # Normalize column names before validation
-        dataframe = dataframe.copy()
-        dataframe.columns = [c.strip().lower() for c in dataframe.columns]
+        # Normalize column names (strip, lowercase, apply COLUMN_ALIASES)
+        # before validation so common header variations are accepted.
+        dataframe = normalize_columns(dataframe)
 
         missing = [c for c in REQUIRED_COLUMNS if c not in dataframe.columns]
         if missing:
