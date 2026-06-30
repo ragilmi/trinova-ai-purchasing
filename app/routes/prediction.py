@@ -113,15 +113,25 @@ class TrainFromRowsRequest(BaseModel):
     )
 
 
+class SplitMetrics(BaseModel):
+    """Evaluation metrics for one data split (train or test)."""
+    log_loss: float = Field(description="Log-Loss (cross-entropy). Lower is better.")
+    mse:      float = Field(description="Mean Squared Error. Lower is better.")
+    mae:      float = Field(description="Mean Absolute Error. Lower is better.")
+    r2:       float = Field(description="R² coefficient of determination. Closer to 1 is better.")
+    accuracy: float = Field(description="Classification accuracy (0–1).")
+    auc_roc:  float = Field(description="Area Under the ROC Curve (0–1). Higher is better.")
+
+
 class TrainResponse(BaseModel):
-    message: str
-    accuracy: float
-    roc_auc: float
+    message:         str
     samples_trained: int
-    samples_tested: int
-    model_path: str
-    classification_report: str
-    data_source: str
+    samples_tested:  int
+    best_round:      int = Field(description="Number of trees used after early stopping.")
+    model_path:      str
+    data_source:     str
+    train_metrics:   SplitMetrics
+    test_metrics:    SplitMetrics
 
 @router.post(
     "/supplier-risk",
@@ -156,7 +166,16 @@ train_router = APIRouter(prefix="/train", tags=["Training"])
 def _run_train_and_respond(metrics: dict) -> TrainResponse:
     """Shared helper: invalidate cache and build the response."""
     invalidate_model_cache()
-    return TrainResponse(message="Model trained and saved successfully.", **metrics)
+    return TrainResponse(
+        message="Model trained and saved successfully.",
+        samples_trained=metrics["samples_trained"],
+        samples_tested=metrics["samples_tested"],
+        best_round=metrics["best_round"],
+        model_path=metrics["model_path"],
+        data_source=metrics["data_source"],
+        train_metrics=SplitMetrics(**metrics["train_metrics"]),
+        test_metrics=SplitMetrics(**metrics["test_metrics"]),
+    )
 
 
 @train_router.post(
