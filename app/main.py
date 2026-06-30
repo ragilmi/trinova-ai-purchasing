@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.routes.prediction import router as prediction_router
-from app.routes.prediction import train_router
+from app.routes.prediction import train_router, batch_router, rank_router
 from app.services.train_model import MODEL_PATH, train
 
 logging.basicConfig(
@@ -35,9 +35,12 @@ async def lifespan(app: FastAPI):
         try:
             metrics = train()
             logger.info(
-                "Auto-training complete — accuracy=%.4f, roc_auc=%.4f",
-                metrics["accuracy"],
-                metrics["roc_auc"],
+                "Auto-training complete — accuracy=%.4f, auc_roc=%.4f  "
+                "(split: %s, cv_avg_accuracy=%.4f)",
+                metrics["test_metrics"]["accuracy"],
+                metrics["test_metrics"]["auc_roc"],
+                metrics["split_method"],
+                metrics["cv_results"].get("avg_accuracy") or 0.0,
             )
         except Exception as exc:
             logger.error(
@@ -74,7 +77,9 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(prediction_router)
+    app.include_router(batch_router)
     app.include_router(train_router)
+    app.include_router(rank_router)
 
     @app.get("/health", tags=["Health"], summary="Service health check")
     def health_check():
