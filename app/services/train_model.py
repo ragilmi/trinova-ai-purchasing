@@ -25,11 +25,11 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
-    log_loss,
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score,
+    precision_score,
+    recall_score,
+    f1_score,
     roc_auc_score,
+    log_loss,
 )
 from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBClassifier
@@ -55,7 +55,7 @@ CV_N_SPLITS: int = 5
 
 
 def _compute_metrics(y_true: pd.Series, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
-    """Compute all 6 evaluation metrics for one split.
+    """Compute evaluation metrics for binary classification.
 
     Args:
         y_true: Ground-truth labels (0/1).
@@ -63,15 +63,15 @@ def _compute_metrics(y_true: pd.Series, y_pred: np.ndarray, y_prob: np.ndarray) 
         y_prob: Predicted probabilities for class 1.
 
     Returns:
-        Dict with keys: log_loss, mse, mae, r2, accuracy, auc_roc
+        Dict with keys: accuracy, precision, recall, f1_score, auc_roc, log_loss
     """
     return {
-        "log_loss": round(float(log_loss(y_true, y_prob)), 4),
-        "mse":      round(float(mean_squared_error(y_true, y_pred)), 4),
-        "mae":      round(float(mean_absolute_error(y_true, y_pred)), 4),
-        "r2":       round(float(r2_score(y_true, y_pred)), 4),
         "accuracy": round(float(accuracy_score(y_true, y_pred)), 4),
-        "auc_roc":  round(float(roc_auc_score(y_true, y_prob)), 4),
+        "precision": round(float(precision_score(y_true, y_pred, zero_division=0)), 4),
+        "recall": round(float(recall_score(y_true, y_pred, zero_division=0)), 4),
+        "f1_score": round(float(f1_score(y_true, y_pred, zero_division=0)), 4),
+        "auc_roc": round(float(roc_auc_score(y_true, y_prob)), 4),
+        "log_loss": round(float(log_loss(y_true, y_prob)), 4),
     }
 
 
@@ -139,8 +139,7 @@ def _run_cv(
     Returns:
         Dict with per-fold metric lists and their averages:
           fold_metrics: list of dicts (one per fold)
-          avg_accuracy, avg_auc_roc, avg_log_loss,
-          avg_mse, avg_mae, avg_r2
+          avg_accuracy, avg_precision, avg_recall, avg_f1_score, avg_auc_roc, avg_log_loss
     """
     tscv = TimeSeriesSplit(n_splits=n_splits)
     fold_metrics: list[dict] = []
@@ -176,9 +175,22 @@ def _run_cv(
         )
 
     # Aggregate across folds
-    keys = ("log_loss", "mse", "mae", "r2", "accuracy", "auc_roc")
+    keys = (
+        "accuracy",
+        "precision",
+        "recall",
+        "f1_score",
+        "auc_roc",
+        "log_loss",
+    )
+
     averages = {
         f"avg_{k}": round(float(np.mean([f[k] for f in fold_metrics])), 4)
+        for k in keys
+    }
+
+    stds = {
+        f"std_{k}": round(float(np.std([f[k] for f in fold_metrics])), 4)
         for k in keys
     }
 
@@ -189,7 +201,11 @@ def _run_cv(
         averages["avg_log_loss"],
     )
 
-    return {"fold_metrics": fold_metrics, **averages}
+    return {
+        "fold_metrics": fold_metrics,
+        **averages,
+        **stds,
+    }
 
 
 def train(
@@ -240,11 +256,11 @@ def train(
         Dict with keys:
             samples_trained, samples_tested, model_path, data_source, best_round,
             split_method,
-            train_metrics:  { log_loss, mse, mae, r2, accuracy, auc_roc },
-            test_metrics:   { log_loss, mse, mae, r2, accuracy, auc_roc },
-            cv_results:     {
-                fold_metrics: [ {fold, log_loss, mse, mae, r2, accuracy, auc_roc}, ... ],
-                avg_log_loss, avg_mse, avg_mae, avg_r2, avg_accuracy, avg_auc_roc
+            train_metrics:  { accuracy, precision, recall, f1_score, auc_roc, log_loss },
+            test_metrics:   { accuracy, precision, recall, f1_score, auc_roc, log_loss },
+            cv_results: {
+                fold_metrics: [{fold, accuracy, precision, recall, f1_score, auc_roc, log_loss}, ...],
+                avg_accuracy, avg_precision, avg_recall, avg_f1_score, avg_auc_roc, avg_log_loss
             }
     """
     model_output_path = Path(model_output_path or MODEL_PATH)
@@ -322,20 +338,34 @@ def train(
     # ------------------------------------------------------------------
     min_samples_for_cv = n_cv_splits + 1
     if len(X_train) >= min_samples_for_cv:
-        cv_results = _run_cv(X_train, y_train, model_params, n_splits=n_cv_splits)
+        cv_results = _run_cv(
+            X_train,
+            y_train,
+            model_params,
+            n_splits=n_cv_splits,
+        )
     else:
         logger.warning(
             "Training set too small for %d-fold CV (%d rows). Skipping CV.",
-            n_cv_splits, len(X_train),
+            n_cv_splits,
+            len(X_train),
         )
+
         cv_results = {
             "fold_metrics": [],
-            "avg_log_loss": None,
-            "avg_mse":      None,
-            "avg_mae":      None,
-            "avg_r2":       None,
             "avg_accuracy": None,
-            "avg_auc_roc":  None,
+            "avg_precision": None,
+            "avg_recall": None,
+            "avg_f1_score": None,
+            "avg_auc_roc": None,
+            "avg_log_loss": None,
+
+            "std_accuracy": None,
+            "std_precision": None,
+            "std_recall": None,
+            "std_f1_score": None,
+            "std_auc_roc": None,
+            "std_log_loss": None,
         }
 
     # ------------------------------------------------------------------
@@ -365,28 +395,43 @@ def train(
     test_metrics = _compute_metrics(y_test, test_pred, test_prob)
 
     logger.info(
-        "Train — log_loss=%.4f, mse=%.4f, mae=%.4f, r2=%.4f, accuracy=%.4f, auc_roc=%.4f",
-        *train_metrics.values(),
+        "Train — accuracy=%.4f, precision=%.4f, recall=%.4f, f1=%.4f, auc_roc=%.4f, log_loss=%.4f",
+        train_metrics["accuracy"],
+        train_metrics["precision"],
+        train_metrics["recall"],
+        train_metrics["f1_score"],
+        train_metrics["auc_roc"],
+        train_metrics["log_loss"],
     )
+
     logger.info(
-        "Test  — log_loss=%.4f, mse=%.4f, mae=%.4f, r2=%.4f, accuracy=%.4f, auc_roc=%.4f",
-        *test_metrics.values(),
+        "Test — accuracy=%.4f, precision=%.4f, recall=%.4f, f1=%.4f, auc_roc=%.4f, log_loss=%.4f",
+        test_metrics["accuracy"],
+        test_metrics["precision"],
+        test_metrics["recall"],
+        test_metrics["f1_score"],
+        test_metrics["auc_roc"],
+        test_metrics["log_loss"],
     )
 
     joblib.dump(model, model_output_path)
     best_round = getattr(model, "best_iteration", model.n_estimators)
-    logger.info("Model saved to %s (best round: %d)", model_output_path, best_round)
+    logger.info(
+        "Model saved to %s (best round: %d)",
+        model_output_path,
+        best_round,
+    )
 
     return {
         "samples_trained": len(X_train),
-        "samples_tested":  len(X_test),
-        "model_path":      str(model_output_path),
-        "data_source":     data_source,
-        "best_round":      best_round,
-        "split_method":    "time_based_80_20",
-        "train_metrics":   train_metrics,
-        "test_metrics":    test_metrics,
-        "cv_results":      cv_results,
+        "samples_tested": len(X_test),
+        "model_path": str(model_output_path),
+        "data_source": data_source,
+        "best_round": best_round,
+        "split_method": "time_based_80_20",
+        "train_metrics": train_metrics,
+        "test_metrics": test_metrics,
+        "cv_results": cv_results,
     }
 
 

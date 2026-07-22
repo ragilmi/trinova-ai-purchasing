@@ -121,43 +121,74 @@ class TrainFromRowsRequest(BaseModel):
 
 
 class SplitMetrics(BaseModel):
-    """Evaluation metrics for one data split (train or test)."""
-    log_loss: float = Field(description="Log-Loss (cross-entropy). Lower is better.")
-    mse:      float = Field(description="Mean Squared Error. Lower is better.")
-    mae:      float = Field(description="Mean Absolute Error. Lower is better.")
-    r2:       float = Field(description="R² coefficient of determination. Closer to 1 is better.")
     accuracy: float = Field(description="Classification accuracy (0–1).")
-    auc_roc:  float = Field(description="Area Under the ROC Curve (0–1). Higher is better.")
+    precision: float = Field(description="Precision (0–1).")
+    recall: float = Field(description="Recall (0–1).")
+    f1_score: float = Field(description="F1-score (0–1).")
+    auc_roc: float = Field(description="Area Under the ROC Curve (0–1).")
+    log_loss: float = Field(description="Log-Loss (cross-entropy). Lower is better.")
 
 
 class FoldMetrics(BaseModel):
-    """Evaluation metrics for a single TimeSeriesSplit CV fold."""
-    fold:     int
-    log_loss: float
-    mse:      float
-    mae:      float
-    r2:       float
+    fold: int
     accuracy: float
-    auc_roc:  float
+    precision: float
+    recall: float
+    f1_score: float
+    auc_roc: float
+    log_loss: float
 
 
 class CVResults(BaseModel):
     """Aggregated results from TimeSeriesSplit cross-validation on the training set.
 
     Cross-validation is performed *only* on the training set (first 80 % of
-    data in chronological order).  Each fold expands forward in time so that
+    data in chronological order). Each fold expands forward in time so that
     validation rows always come after training rows — preventing any future
     data leakage.
     """
-    fold_metrics:  list[FoldMetrics] = Field(
+
+    fold_metrics: list[FoldMetrics] = Field(
         description="Per-fold validation metrics."
     )
-    avg_log_loss:  float | None = Field(None, description="Mean log-loss across folds.")
-    avg_mse:       float | None = Field(None, description="Mean MSE across folds.")
-    avg_mae:       float | None = Field(None, description="Mean MAE across folds.")
-    avg_r2:        float | None = Field(None, description="Mean R² across folds.")
-    avg_accuracy:  float | None = Field(None, description="Mean accuracy across folds.")
-    avg_auc_roc:   float | None = Field(None, description="Mean AUC-ROC across folds.")
+
+    avg_accuracy: float | None = Field(
+        None, description="Mean accuracy across folds."
+    )
+    avg_precision: float | None = Field(
+        None, description="Mean precision across folds."
+    )
+    avg_recall: float | None = Field(
+        None, description="Mean recall across folds."
+    )
+    avg_f1_score: float | None = Field(
+        None, description="Mean F1-score across folds."
+    )
+    avg_auc_roc: float | None = Field(
+        None, description="Mean AUC-ROC across folds."
+    )
+    avg_log_loss: float | None = Field(
+        None, description="Mean log-loss across folds."
+    )
+
+    std_accuracy: float | None = Field(
+        None, description="Standard deviation of accuracy across folds."
+    )
+    std_precision: float | None = Field(
+        None, description="Standard deviation of precision across folds."
+    )
+    std_recall: float | None = Field(
+        None, description="Standard deviation of recall across folds."
+    )
+    std_f1_score: float | None = Field(
+        None, description="Standard deviation of F1-score across folds."
+    )
+    std_auc_roc: float | None = Field(
+        None, description="Standard deviation of AUC-ROC across folds."
+    )
+    std_log_loss: float | None = Field(
+        None, description="Standard deviation of log-loss across folds."
+    )
 
 
 class TrainResponse(BaseModel):
@@ -471,13 +502,25 @@ def _run_train_and_respond(metrics: dict) -> TrainResponse:
     raw_cv = metrics.get("cv_results", {})
     cv = CVResults(
         fold_metrics=[FoldMetrics(**f) for f in raw_cv.get("fold_metrics", [])],
-        avg_log_loss=raw_cv.get("avg_log_loss"),
-        avg_mse=raw_cv.get("avg_mse"),
-        avg_mae=raw_cv.get("avg_mae"),
-        avg_r2=raw_cv.get("avg_r2"),
         avg_accuracy=raw_cv.get("avg_accuracy"),
+        avg_precision=raw_cv.get("avg_precision"),
+        avg_recall=raw_cv.get("avg_recall"),
+        avg_f1_score=raw_cv.get("avg_f1_score"),
         avg_auc_roc=raw_cv.get("avg_auc_roc"),
+        avg_log_loss=raw_cv.get("avg_log_loss"),
+
+        std_accuracy=raw_cv.get("std_accuracy"),
+        std_precision=raw_cv.get("std_precision"),
+        std_recall=raw_cv.get("std_recall"),
+        std_f1_score=raw_cv.get("std_f1_score"),
+        std_auc_roc=raw_cv.get("std_auc_roc"),
+        std_log_loss=raw_cv.get("std_log_loss"),
     )
+
+    print("RAW CV RESULTS:", raw_cv)
+    print("STD ACC:", raw_cv.get("std_accuracy"))
+    print("STD PREC:", raw_cv.get("std_precision"))
+    print("STD REC:", raw_cv.get("std_recall"))
 
     return TrainResponse(
         message="Model trained and saved successfully.",
