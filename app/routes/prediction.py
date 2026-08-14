@@ -192,22 +192,29 @@ class CVResults(BaseModel):
 
 
 class TrainResponse(BaseModel):
-    message:         str
-    split_method:    str = Field(
+    message:             str
+    split_method:        str = Field(
         description=(
             "Splitting strategy used. 'time_based_80_20' means the first 80 % of "
             "rows (chronologically) were used for training and the last 20 % for "
             "testing — no random shuffling applied."
         )
     )
-    samples_trained: int
-    samples_tested:  int
-    best_round:      int = Field(description="Number of trees used after early stopping.")
-    model_path:      str
-    data_source:     str
-    train_metrics:   SplitMetrics
-    test_metrics:    SplitMetrics
-    cv_results:      CVResults = Field(
+    samples_trained:     int
+    samples_tested:      int
+    total_samples:       int | None = None
+    dataset_fingerprint: str | None = Field(
+        default=None,
+        description="Deterministic SHA-256 fingerprint (first 16 hex chars) of the dataset."
+    )
+    feature_columns:     list[str] | None = None
+    label_column:        str | None = None
+    best_round:          int = Field(description="Number of trees used after early stopping.")
+    model_path:          str
+    data_source:         str
+    train_metrics:       SplitMetrics
+    test_metrics:        SplitMetrics
+    cv_results:          CVResults = Field(
         description=(
             "TimeSeriesSplit cross-validation results computed on the training set. "
             "Use avg_accuracy / avg_auc_roc to compare model iterations without "
@@ -527,7 +534,11 @@ def _run_train_and_respond(metrics: dict) -> TrainResponse:
         split_method=metrics.get("split_method", "time_based_80_20"),
         samples_trained=metrics["samples_trained"],
         samples_tested=metrics["samples_tested"],
-        best_round=metrics["best_round"],
+        total_samples=metrics.get("total_samples"),
+        dataset_fingerprint=metrics.get("dataset_fingerprint"),
+        feature_columns=metrics.get("feature_columns"),
+        label_column=metrics.get("label_column"),
+        best_round=metrics.get("best_round", 0),
         model_path=metrics["model_path"],
         data_source=metrics["data_source"],
         train_metrics=SplitMetrics(**metrics["train_metrics"]),
