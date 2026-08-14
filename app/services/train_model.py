@@ -17,6 +17,7 @@ Split strategy (chronological / temporal):
   TimeSeriesSplit CV on train set — forward-only fold expansion
 """
 
+import hashlib
 import logging
 import sys
 from pathlib import Path
@@ -452,9 +453,19 @@ def train(
         dataset_info=dataset_info,
     )
 
+    # Compute deterministic dataset fingerprint (SHA-256 over canonicalized features + label)
+    available_cols = [c for c in REQUIRED_COLUMNS if c in df.columns]
+    dataset_fingerprint = hashlib.sha256(
+        pd.util.hash_pandas_object(df[available_cols], index=False).values
+    ).hexdigest()[:16]
+
     return {
         "samples_trained": len(X_train),
         "samples_tested": len(X_test),
+        "total_samples": len(df),
+        "dataset_fingerprint": dataset_fingerprint,
+        "feature_columns": FEATURE_COLUMNS,
+        "label_column": LABEL_COLUMN,
         "model_path": str(model_output_path),
         "data_source": data_source,
         "best_round": best_round,
@@ -617,9 +628,19 @@ def train_linear_regression(
     joblib.dump(model, model_output_path)
     logger.info("[LR] Model saved to %s", model_output_path)
 
+    # Compute deterministic dataset fingerprint (SHA-256 over canonicalized features + label)
+    available_cols = [c for c in REQUIRED_COLUMNS if c in df.columns]
+    dataset_fingerprint = hashlib.sha256(
+        pd.util.hash_pandas_object(df[available_cols], index=False).values
+    ).hexdigest()[:16]
+
     return {
         "samples_trained": len(X_train),
         "samples_tested":  len(X_test),
+        "total_samples":   len(df),
+        "dataset_fingerprint": dataset_fingerprint,
+        "feature_columns": FEATURE_COLUMNS,
+        "label_column":    LABEL_COLUMN,
         "model_path":      str(model_output_path),
         "data_source":     data_source,
         "split_method":    "time_based_80_20",
