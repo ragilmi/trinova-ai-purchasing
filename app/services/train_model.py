@@ -18,11 +18,18 @@ Split strategy (chronological / temporal):
 """
 
 import logging
+import sys
 from pathlib import Path
+
+# Ensure project root is in sys.path when running as a standalone script
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -41,11 +48,15 @@ from app.services.preprocess import (
     normalize_columns,
     preprocess_dataframe,
 )
+from app.services.model_comparison import run_model_comparison
 
 logger = logging.getLogger(__name__)
 
-# Default path where the trained model artifact is saved
+# Default path where the trained XGBoost model artifact is saved
 MODEL_PATH = Path(__file__).parent.parent / "models" / "xgboost_model.pkl"
+
+# Path where the trained Linear Regression production model artifact is saved
+LR_MODEL_PATH = Path(__file__).parent.parent / "models" / "linear_regression_model.pkl"
 
 # Columns the caller must supply when sending raw rows
 REQUIRED_COLUMNS = FEATURE_COLUMNS + [LABEL_COLUMN]
@@ -158,7 +169,6 @@ def _run_cv(
             y_tr,
             eval_set=[(X_val, y_val)],
             verbose=False,
-            early_stopping_rounds=20,
         )
 
         val_pred = fold_model.predict(X_val)
@@ -330,6 +340,7 @@ def train(
         reg_lambda=2.0,
         gamma=0.1,
         eval_metric="logloss",
+        early_stopping_rounds=20,
         random_state=random_state,
     )
 
@@ -377,7 +388,6 @@ def train(
         y_train,
         eval_set=[(X_test, y_test)],
         verbose=False,
-        early_stopping_rounds=20,
     )
 
     # ------------------------------------------------------------------
@@ -422,6 +432,26 @@ def train(
         best_round,
     )
 
+    # ------------------------------------------------------------------
+    # Model Comparison — Linear Regression vs XGBoost
+    # ------------------------------------------------------------------
+    dataset_info = {
+        "total_products": len(df["supplier_id"].unique()) if "supplier_id" in df.columns else len(df),
+        "products_evaluated": len(test_df["supplier_id"].unique()) if "supplier_id" in test_df.columns else len(test_df),
+        "evaluation_method": "Hold-out Validation (Time-based 80/20)",
+        "training_window": f"80% historical data ({len(X_train)} samples)",
+        "testing_window": f"20% test split ({len(X_test)} samples)",
+    }
+
+    comparison_results = run_model_comparison(
+        X_train=X_train,
+        y_train=y_train,
+        X_test=X_test,
+        y_test=y_test,
+        xgb_model=model,
+        dataset_info=dataset_info,
+    )
+
     return {
         "samples_trained": len(X_train),
         "samples_tested": len(X_test),
@@ -432,6 +462,7 @@ def train(
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,
         "cv_results": cv_results,
+        "model_comparison": comparison_results,
     }
 
 
@@ -456,3 +487,169 @@ def load_model(model_path: str | Path | None = None) -> XGBClassifier:
         )
 
     return joblib.load(model_path)
+
+
+def train_linear_regression(
+    csv_path: str | Path | None = None,
+    dataframe: pd.DataFrame | None = None,
+    append_to_existing: bool = False,
+    model_output_path: str | Path | None = None,
+    test_size: float = 0.2,
+) -> dict:
+    """Train a Linear Regression production model using the exact same preprocessing
+    pipeline as the XGBoost model and persist the artifact to LR_MODEL_PATH.
+
+    This function mirrors the data-loading and split logic of ``train()`` so that
+    both production models are always trained on an identical feature vector.
+
+    The Linear Regression output is a continuous score; binary classification uses
+    threshold = 0.50 (same convention as model_comparison.py).
+
+    Args:
+        csv_path:           Path to a training CSV. Defaults to bundled dataset.
+        dataframe:          Pre-built DataFrame of training rows (live ERP data).
+        append_to_existing: When True, merge ``dataframe`` with the bundled dataset.
+        model_output_path:  Where to save the .pkl artifact. Defaults to LR_MODEL_PATH.
+        test_size:          Fraction of data held out for evaluation (time-based).
+
+    Returns:
+        Dict with keys: samples_trained, samples_tested, model_path, data_source,
+        split_method, train_metrics, test_metrics.
+    """
+    model_output_path = Path(model_output_path or LR_MODEL_PATH)
+    model_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Resolve training DataFrame (identical to train())
+    # ------------------------------------------------------------------
+    if dataframe is not None:
+        dataframe = normalize_columns(dataframe)
+
+        missing = [c for c in REQUIRED_COLUMNS if c not in dataframe.columns]
+        if missing:
+            raise ValueError(
+                f"Supplied dataframe is missing required columns: {missing}. "
+                f"Required: {REQUIRED_COLUMNS}"
+            )
+
+        if append_to_existing:
+            bundled = load_dataset()
+            df = pd.concat([bundled, dataframe], ignore_index=True)
+            data_source = f"live_data ({len(dataframe)} new rows) + bundled ({len(bundled)} rows)"
+        else:
+            df = dataframe.copy()
+            data_source = f"live_data ({len(df)} rows)"
+
+        logger.info("[LR] Using live dataframe: %s", data_source)
+    else:
+        logger.info("[LR] Loading dataset from disk...")
+        df = load_dataset(csv_path)
+        data_source = str(csv_path) if csv_path else "bundled_dataset"
+        logger.info("[LR] Dataset loaded: %d rows from %s", len(df), data_source)
+
+    if len(df) < 10:
+        raise ValueError(
+            f"Dataset has only {len(df)} rows. Need at least 10 samples to train."
+        )
+
+    # ------------------------------------------------------------------
+    # Time-based 80/20 split (identical to train())
+    # ------------------------------------------------------------------
+    train_df, test_df = _time_based_split(df, test_size=test_size)
+    logger.info(
+        "[LR] Time-based split — train: %d rows (%.0f%%), test: %d rows (%.0f%%)",
+        len(train_df), (1 - test_size) * 100,
+        len(test_df),  test_size * 100,
+    )
+
+    X_train, y_train = preprocess_dataframe(train_df)
+    X_test,  y_test  = preprocess_dataframe(test_df)
+
+    if y_train is None or y_test is None:
+        raise ValueError("Training dataset must contain the 'late_delivery' label column.")
+
+    # ------------------------------------------------------------------
+    # Train Linear Regression on full training set
+    # ------------------------------------------------------------------
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+
+    # ------------------------------------------------------------------
+    # Evaluate — threshold 0.50 for binary classification (same as model_comparison.py)
+    # ------------------------------------------------------------------
+    THRESHOLD = 0.50
+
+    train_scores = model.predict(X_train)
+    train_pred = (train_scores >= THRESHOLD).astype(int)
+    train_metrics = {
+        "accuracy":  round(float(accuracy_score(y_train, train_pred)), 4),
+        "precision": round(float(precision_score(y_train, train_pred, zero_division=0)), 4),
+        "recall":    round(float(recall_score(y_train, train_pred, zero_division=0)), 4),
+        "f1_score":  round(float(f1_score(y_train, train_pred, zero_division=0)), 4),
+        "auc_roc":   round(float(roc_auc_score(y_train, train_scores)), 4),
+        "log_loss":  round(float(log_loss(y_train, np.clip(train_scores, 1e-7, 1 - 1e-7))), 4),
+    }
+
+    test_scores = model.predict(X_test)
+    test_pred = (test_scores >= THRESHOLD).astype(int)
+    test_metrics = {
+        "accuracy":  round(float(accuracy_score(y_test, test_pred)), 4),
+        "precision": round(float(precision_score(y_test, test_pred, zero_division=0)), 4),
+        "recall":    round(float(recall_score(y_test, test_pred, zero_division=0)), 4),
+        "f1_score":  round(float(f1_score(y_test, test_pred, zero_division=0)), 4),
+        "auc_roc":   round(float(roc_auc_score(y_test, test_scores)), 4),
+        "log_loss":  round(float(log_loss(y_test, np.clip(test_scores, 1e-7, 1 - 1e-7))), 4),
+    }
+
+    logger.info(
+        "[LR] Train — accuracy=%.4f, precision=%.4f, recall=%.4f, f1=%.4f, auc_roc=%.4f",
+        train_metrics["accuracy"], train_metrics["precision"],
+        train_metrics["recall"],   train_metrics["f1_score"],
+        train_metrics["auc_roc"],
+    )
+    logger.info(
+        "[LR] Test — accuracy=%.4f, precision=%.4f, recall=%.4f, f1=%.4f, auc_roc=%.4f",
+        test_metrics["accuracy"], test_metrics["precision"],
+        test_metrics["recall"],   test_metrics["f1_score"],
+        test_metrics["auc_roc"],
+    )
+
+    joblib.dump(model, model_output_path)
+    logger.info("[LR] Model saved to %s", model_output_path)
+
+    return {
+        "samples_trained": len(X_train),
+        "samples_tested":  len(X_test),
+        "model_path":      str(model_output_path),
+        "data_source":     data_source,
+        "split_method":    "time_based_80_20",
+        "train_metrics":   train_metrics,
+        "test_metrics":    test_metrics,
+    }
+
+
+def load_linear_regression_model(model_path: str | Path | None = None) -> LinearRegression:
+    """Load the trained Linear Regression production model from disk.
+
+    Args:
+        model_path: Path to the .pkl file. Defaults to LR_MODEL_PATH.
+
+    Returns:
+        Loaded LinearRegression instance.
+
+    Raises:
+        FileNotFoundError: If no artifact exists at the given path.
+    """
+    model_path = Path(model_path or LR_MODEL_PATH)
+
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"No trained Linear Regression model found at '{model_path}'. "
+            "Call POST /train/linear-regression to train the model first."
+        )
+
+    return joblib.load(model_path)
+
+
+if __name__ == "__main__":
+    train()

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from app.routes.prediction import router as prediction_router
 from app.routes.prediction import train_router, batch_router, rank_router
 from app.services.train_model import MODEL_PATH, train
+from app.services.model_factory import validate_and_load_production_model
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,9 +29,10 @@ ALLOWED_ORIGINS: list[str] = os.getenv(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Step 1: Ensure XGBoost artifact exists (auto-train if missing) ──────
     if not MODEL_PATH.exists():
         logger.info(
-            "No trained model found at '%s'. Running initial training...", MODEL_PATH
+            "No trained XGBoost model found at '%s'. Running initial training...", MODEL_PATH
         )
         try:
             metrics = train()
@@ -48,9 +50,23 @@ async def lifespan(app: FastAPI):
                 exc,
             )
     else:
-        logger.info("Existing model found at '%s'. Skipping auto-train.", MODEL_PATH)
+        logger.info("Existing XGBoost model found at '%s'. Skipping auto-train.", MODEL_PATH)
 
-    yield  
+    # ── Step 2: Validate and load the configured production model ────────────
+    # Reads PURCHASING_AI_MODEL env var, validates the value, checks the
+    # artifact exists, loads it, and runs a smoke-test prediction.
+    # Fails loudly if anything is wrong — no silent fallback.
+    try:
+        validate_and_load_production_model()
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        logger.error(
+            "PRODUCTION MODEL STARTUP VALIDATION FAILED: %s", exc
+        )
+        logger.error(
+            "The service will start but predictions will fail until the issue is resolved."
+        )
+
+    yield
 
     logger.info("ML service shutting down.")
 
