@@ -142,7 +142,7 @@ class FoldMetrics(BaseModel):
 class CVResults(BaseModel):
     """Aggregated results from TimeSeriesSplit cross-validation on the training set.
 
-    Cross-validation is performed *only* on the training set (first 80 % of
+    Cross-validation is performed only on the training set (first 80 % of
     data in chronological order). Each fold expands forward in time so that
     validation rows always come after training rows — preventing any future
     data leakage.
