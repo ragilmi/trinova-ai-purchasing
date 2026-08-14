@@ -1,7 +1,7 @@
 """
 model_comparison.py
 Handles training, evaluation, and comparison between Linear Regression (academic baseline),
-Random Forest Classifier, and XGBoost Classifier for supplier late-delivery risk prediction.
+XGBoost Classifier for supplier late-delivery risk prediction.
 
 Linear Regression Baseline:
   - Produces continuous regression scores: y_score = model.predict(X_test)
@@ -10,7 +10,7 @@ Linear Regression Baseline:
   - ROC-AUC is evaluated directly on continuous y_score.
   - Log Loss is marked as N/A (Linear Regression outputs are continuous scores, not calibrated probabilities).
 
-Ensemble Classifiers (Random Forest & XGBoost):
+Ensemble Classifiers (XGBoost):
   - Predict hard binary classes via model.predict(X_test) for Accuracy, Precision, Recall, F1.
   - Predict continuous probabilities via model.predict_proba(X_test)[:, 1] for ROC-AUC and Log Loss.
 """
@@ -26,7 +26,6 @@ if str(ROOT_DIR) not in sys.path:
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import (
     accuracy_score,
@@ -47,7 +46,7 @@ def evaluate_classifier_metrics(
     y_pred: np.ndarray,
     y_prob: np.ndarray,
 ) -> dict:
-    """Calculate classification metrics for probabilistic classifiers (Random Forest, XGBoost)."""
+    """Calculate classification metrics for probabilistic classifiers (XGBoost)."""
     acc = float(accuracy_score(y_true, y_pred))
     prec = float(precision_score(y_true, y_pred, zero_division=0))
     rec = float(recall_score(y_true, y_pred, zero_division=0))
@@ -129,7 +128,7 @@ def run_model_comparison(
     xgb_model: XGBClassifier | None = None,
     dataset_info: dict | None = None,
 ) -> dict:
-    """Train Linear Regression Baseline, Random Forest, and XGBoost Classifier on X_train/y_train,
+    """Train Linear Regression Baseline, XGBoost Classifier on X_train/y_train,
     evaluate on X_test/y_test, and display a model comparison report.
 
     Args:
@@ -173,32 +172,7 @@ def run_model_comparison(
     models_dict["Linear Regression"] = lr_metrics
 
     # ------------------------------------------------------------------
-    # 2. Train & Evaluate Random Forest Classifier
-    # ------------------------------------------------------------------
-    rf_status = "Training completed successfully."
-    try:
-        rf_model = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=None,
-            random_state=42,
-            n_jobs=-1,
-        )
-        rf_model.fit(X_train, y_train)
-        y_pred_rf = rf_model.predict(X_test)
-        y_prob_rf = rf_model.predict_proba(X_test)[:, 1]
-        rf_metrics = evaluate_classifier_metrics(y_test, y_pred_rf, y_prob_rf)
-    except Exception as exc:
-        logger.error("Random Forest training/evaluation failed: %s", exc)
-        rf_status = f"Failed: {exc}"
-        rf_metrics = {
-            "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1_score": 0.0, "auc_roc": 0.0, "log_loss": 99.0, "log_loss_str": " 99.0000",
-            "_raw_acc": 0.0, "_raw_prec": 0.0, "_raw_rec": 0.0, "_raw_f1": 0.0, "_raw_auc": 0.0, "_raw_loss": 99.0,
-            "tn": 0, "fp": 0, "fn": 0, "tp": 0,
-        }
-    models_dict["Random Forest"] = rf_metrics
-
-    # ------------------------------------------------------------------
-    # 3. Train & Evaluate XGBoost Classifier
+    # 2. Train & Evaluate XGBoost Classifier
     # ------------------------------------------------------------------
     xgb_status = "Training completed successfully."
     try:
@@ -230,9 +204,9 @@ def run_model_comparison(
     models_dict["XGBoost Classifier"] = xgb_metrics
 
     # ------------------------------------------------------------------
-    # 4. Unrounded Full-Precision Winner Determination & Metric Highlights
+    # 3. Unrounded Full-Precision Winner Determination & Metric Highlights
     # ------------------------------------------------------------------
-    candidates = ["Linear Regression", "Random Forest", "XGBoost Classifier"]
+    candidates = ["Linear Regression", "XGBoost Classifier"]
 
     best_acc_model = max(candidates, key=lambda m: models_dict[m]["_raw_acc"])
     best_acc_val = models_dict[best_acc_model]["accuracy"]
@@ -250,7 +224,7 @@ def run_model_comparison(
     best_auc_val = models_dict[best_auc_model]["auc_roc"]
 
     # Log Loss winner evaluated only among probabilistic classifiers
-    prob_candidates = ["Random Forest", "XGBoost Classifier"]
+    prob_candidates = ["XGBoost Classifier"]
     best_loss_model = min(prob_candidates, key=lambda m: models_dict[m]["_raw_loss"])
     best_loss_val = models_dict[best_loss_model]["log_loss"]
 
@@ -259,13 +233,8 @@ def run_model_comparison(
     overall_best_f1 = best_f1_val
 
     # Improvements vs Linear Regression Baseline (calculated using unrounded values)
-    f1_diff_rf = rf_metrics["_raw_f1"] - lr_metrics["_raw_f1"]
     f1_diff_xgb = xgb_metrics["_raw_f1"] - lr_metrics["_raw_f1"]
-
-    acc_diff_rf = rf_metrics["_raw_acc"] - lr_metrics["_raw_acc"]
     acc_diff_xgb = xgb_metrics["_raw_acc"] - lr_metrics["_raw_acc"]
-
-    auc_diff_rf = rf_metrics["_raw_auc"] - lr_metrics["_raw_auc"]
     auc_diff_xgb = xgb_metrics["_raw_auc"] - lr_metrics["_raw_auc"]
 
     # ------------------------------------------------------------------
@@ -298,13 +267,10 @@ Class 1                  : Late Delivery
 MODEL TRAINING
 ====================================================================================================
 
-[1/3] Training Linear Regression Baseline...
+[1/2] Training Linear Regression Baseline...
       {lr_status}
 
-[2/3] Training Random Forest Classifier...
-      {rf_status}
-
-[3/3] Training XGBoost Classifier...
+[2/2] Training XGBoost Classifier...
       {xgb_status}
 
 ====================================================================================================
@@ -328,14 +294,12 @@ MODEL PERFORMANCE
 Model                  Accuracy  Precision  Recall   F1 Score   ROC-AUC  Log Loss
 ----------------------------------------------------------------------------------------------------
 Linear Regression        {lr_metrics['accuracy']:8.4f}   {lr_metrics['precision']:8.4f}  {lr_metrics['recall']:8.4f}   {lr_metrics['f1_score']:8.4f}   {lr_metrics['auc_roc']:8.4f}  {lr_metrics['log_loss_str']}
-Random Forest            {rf_metrics['accuracy']:8.4f}   {rf_metrics['precision']:8.4f}  {rf_metrics['recall']:8.4f}   {rf_metrics['f1_score']:8.4f}   {rf_metrics['auc_roc']:8.4f}  {rf_metrics['log_loss_str']}
 XGBoost Classifier       {xgb_metrics['accuracy']:8.4f}   {xgb_metrics['precision']:8.4f}  {xgb_metrics['recall']:8.4f}   {xgb_metrics['f1_score']:8.4f}   {xgb_metrics['auc_roc']:8.4f}  {xgb_metrics['log_loss_str']}
 ----------------------------------------------------------------------------------------------------
 
 CONFUSION MATRICES
 ----------------------------------------------------------------------------------------------------
 Linear Regression     : TN={lr_metrics['tn']}, FP={lr_metrics['fp']} | FN={lr_metrics['fn']}, TP={lr_metrics['tp']} (threshold=0.50)
-Random Forest         : TN={rf_metrics['tn']}, FP={rf_metrics['fp']} | FN={rf_metrics['fn']}, TP={rf_metrics['tp']}
 XGBoost Classifier      : TN={xgb_metrics['tn']}, FP={xgb_metrics['fp']} | FN={xgb_metrics['fn']}, TP={xgb_metrics['tp']}
 
 ====================================================================================================
@@ -357,15 +321,12 @@ MODEL COMPARISON (vs Linear Regression Baseline)
 ====================================================================================================
 
 F1 Score Improvement
-  - Random Forest       : {f1_diff_rf:+.4f}
   - XGBoost Classifier  : {f1_diff_xgb:+.4f}
 
 Accuracy Improvement
-  - Random Forest       : {acc_diff_rf:+.4f}
   - XGBoost Classifier  : {acc_diff_xgb:+.4f}
 
 ROC-AUC Improvement
-  - Random Forest       : {auc_diff_rf:+.4f}
   - XGBoost Classifier  : {auc_diff_xgb:+.4f}
 
 ====================================================================================================
@@ -378,7 +339,6 @@ TRAINING COMPLETED
 
     return {
         "linear_regression": lr_metrics,
-        "random_forest": rf_metrics,
         "xgboost": xgb_metrics,
         "best_model": overall_best_model,
         "best_f1": overall_best_f1,
@@ -390,10 +350,7 @@ TRAINING COMPLETED
         "best_f1_model": best_f1_model,
         "best_auc_model": best_auc_model,
         "best_loss_model": best_loss_model,
-        "f1_improvement_rf": round(f1_diff_rf, 4),
         "f1_improvement_xgb": round(f1_diff_xgb, 4),
-        "accuracy_improvement_rf": round(acc_diff_rf, 4),
         "accuracy_improvement_xgb": round(acc_diff_xgb, 4),
-        "auc_improvement_rf": round(auc_diff_rf, 4),
         "auc_improvement_xgb": round(auc_diff_xgb, 4),
     }

@@ -1,6 +1,6 @@
 """
 test_model_comparison.py
-Unit and integration tests for Linear Regression baseline, Random Forest, and XGBoost
+Unit and integration tests for Linear Regression baseline and XGBoost
 model comparison and FastAPI endpoint preservation using standard unittest library.
 """
 
@@ -63,12 +63,10 @@ class TestModelComparison(unittest.TestCase):
         result = run_model_comparison(X_train, y_train, X_test, y_test)
 
         self.assertIn("linear_regression", result)
-        self.assertIn("random_forest", result)
         self.assertIn("xgboost", result)
         self.assertIn("best_model", result)
-        self.assertIn(result["best_model"], ["Linear Regression", "Random Forest", "XGBoost Classifier"])
+        self.assertIn(result["best_model"], ["Linear Regression", "XGBoost Classifier"])
         self.assertIn("f1_score", result["linear_regression"])
-        self.assertIn("f1_score", result["random_forest"])
         self.assertIn("f1_score", result["xgboost"])
 
     def test_train_end_to_end(self):
@@ -79,9 +77,8 @@ class TestModelComparison(unittest.TestCase):
         self.assertIn("model_comparison", metrics)
         comp = metrics["model_comparison"]
         self.assertIn("linear_regression", comp)
-        self.assertIn("random_forest", comp)
         self.assertIn("xgboost", comp)
-        self.assertIn(comp["best_model"], ["Linear Regression", "Random Forest", "XGBoost Classifier"])
+        self.assertIn(comp["best_model"], ["Linear Regression", "XGBoost Classifier"])
 
     def test_api_health_endpoint(self):
         response = client.get("/health")
