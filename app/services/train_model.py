@@ -18,7 +18,13 @@ Split strategy (chronological / temporal):
 """
 
 import logging
+import sys
 from pathlib import Path
+
+# Ensure project root is in sys.path when running as a standalone script
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 import joblib
 import numpy as np
@@ -41,6 +47,7 @@ from app.services.preprocess import (
     normalize_columns,
     preprocess_dataframe,
 )
+from app.services.model_comparison import run_model_comparison
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +165,6 @@ def _run_cv(
             y_tr,
             eval_set=[(X_val, y_val)],
             verbose=False,
-            early_stopping_rounds=20,
         )
 
         val_pred = fold_model.predict(X_val)
@@ -330,6 +336,7 @@ def train(
         reg_lambda=2.0,
         gamma=0.1,
         eval_metric="logloss",
+        early_stopping_rounds=20,
         random_state=random_state,
     )
 
@@ -377,7 +384,6 @@ def train(
         y_train,
         eval_set=[(X_test, y_test)],
         verbose=False,
-        early_stopping_rounds=20,
     )
 
     # ------------------------------------------------------------------
@@ -422,6 +428,26 @@ def train(
         best_round,
     )
 
+    # ------------------------------------------------------------------
+    # Model Comparison — Linear Regression vs XGBoost
+    # ------------------------------------------------------------------
+    dataset_info = {
+        "total_products": len(df["supplier_id"].unique()) if "supplier_id" in df.columns else len(df),
+        "products_evaluated": len(test_df["supplier_id"].unique()) if "supplier_id" in test_df.columns else len(test_df),
+        "evaluation_method": "Hold-out Validation (Time-based 80/20)",
+        "training_window": f"80% historical data ({len(X_train)} samples)",
+        "testing_window": f"20% test split ({len(X_test)} samples)",
+    }
+
+    comparison_results = run_model_comparison(
+        X_train=X_train,
+        y_train=y_train,
+        X_test=X_test,
+        y_test=y_test,
+        xgb_model=model,
+        dataset_info=dataset_info,
+    )
+
     return {
         "samples_trained": len(X_train),
         "samples_tested": len(X_test),
@@ -432,6 +458,7 @@ def train(
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,
         "cv_results": cv_results,
+        "model_comparison": comparison_results,
     }
 
 
@@ -456,3 +483,7 @@ def load_model(model_path: str | Path | None = None) -> XGBClassifier:
         )
 
     return joblib.load(model_path)
+
+
+if __name__ == "__main__":
+    train()
